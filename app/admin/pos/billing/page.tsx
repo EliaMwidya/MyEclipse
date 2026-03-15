@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "sonner"
-import { Receipt, CreditCard, Printer, ArrowDownCircle } from "lucide-react"
+import { Receipt, CreditCard, Printer, ArrowDownCircle, Loader2, UserPlus } from "lucide-react"
 import { generateThermalReceipt, openPrintWindow } from "@/lib/pdf-generator"
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
@@ -38,6 +38,18 @@ export default function BillingPage() {
   const [withdrawalAmount, setWithdrawalAmount] = useState("")
   const [withdrawalReason, setWithdrawalReason] = useState("")
 
+  // Credit sale
+  const [showCreditDialog, setShowCreditDialog] = useState(false)
+  const [creditOrderId, setCreditOrderId] = useState("")
+  const [creditClientName, setCreditClientName] = useState("")
+  const [creditClientPhone, setCreditClientPhone] = useState("")
+  const [creditNotes, setCreditNotes] = useState("")
+
+  // Loading states
+  const [isPaying, setIsPaying] = useState(false)
+  const [isWithdrawing, setIsWithdrawing] = useState(false)
+  const [isCreatingCredit, setIsCreatingCredit] = useState(false)
+
   const company = {
     name: settings?.restaurant_name || "Eclipse Lunc Bar",
     address: settings?.restaurant_address || "",
@@ -63,18 +75,62 @@ export default function BillingPage() {
 
   async function handlePay() {
     if (!activePayId) return
-    const res = await fetch("/api/pos/payments", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ orderId: activePayId, paymentMethod, amountCash: Number(amountCash) || 0, amountMobile: Number(amountMobile) || 0, amountCard: Number(amountCard) || 0, waiterId: selectedWaiter || null }),
-    })
-    if (res.ok) {
-      const payment = await res.json()
-      toast.success(`Paiement ${payment.invoice_number} enregistre`)
-      removePaying(activePayId)
-      mutateOrders(); mutatePayments()
-      setAmountCash(""); setAmountMobile(""); setAmountCard("")
-      handlePrintReceipt(payment.id)
-    } else { const d = await res.json(); toast.error(d.error || "Erreur") }
+    setIsPaying(true)
+    try {
+      const res = await fetch("/api/pos/payments", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: activePayId, paymentMethod, amountCash: Number(amountCash) || 0, amountMobile: Number(amountMobile) || 0, amountCard: Number(amountCard) || 0, waiterId: selectedWaiter || null }),
+      })
+      if (res.ok) {
+        const payment = await res.json()
+        toast.success(`Paiement ${payment.invoice_number} enregistre`)
+        removePaying(activePayId)
+        mutateOrders(); mutatePayments()
+        setAmountCash(""); setAmountMobile(""); setAmountCard("")
+        handlePrintReceipt(payment.id)
+      } else { const d = await res.json(); toast.error(d.error || "Erreur") }
+    } finally {
+      setIsPaying(false)
+    }
+  }
+
+  function openCreditDialog(orderId: string) {
+    setCreditOrderId(orderId)
+    setCreditClientName("")
+    setCreditClientPhone("")
+    setCreditNotes("")
+    setShowCreditDialog(true)
+  }
+
+  async function handleCreateCredit() {
+    if (!creditOrderId || !creditClientName) {
+      toast.error("Nom du client requis")
+      return
+    }
+    setIsCreatingCredit(true)
+    try {
+      const res = await fetch("/api/pos/credits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          orderId: creditOrderId,
+          clientName: creditClientName,
+          clientPhone: creditClientPhone,
+          notes: creditNotes,
+        }),
+      })
+      if (res.ok) {
+        const credit = await res.json()
+        toast.success(`Credit ${credit.credit_reference} cree`)
+        setShowCreditDialog(false)
+        mutateOrders()
+      } else {
+        const d = await res.json()
+        toast.error(d.error || "Erreur")
+      }
+    } finally {
+      setIsCreatingCredit(false)
+    }
   }
 
   async function handlePrintReceipt(paymentId: string) {
@@ -97,9 +153,14 @@ export default function BillingPage() {
 
   async function handleWithdrawal() {
     if (!selectedPos || !withdrawalAmount || !withdrawalReason) return
-    const res = await fetch("/api/pos/withdrawals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pointOfSaleId: selectedPos, amount: Number(withdrawalAmount), reason: withdrawalReason }) })
-    if (res.ok) { toast.success("Retrait enregistre"); setShowWithdrawal(false); setWithdrawalAmount(""); setWithdrawalReason("") }
-    else { const d = await res.json(); toast.error(d.error || "Erreur") }
+    setIsWithdrawing(true)
+    try {
+      const res = await fetch("/api/pos/withdrawals", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pointOfSaleId: selectedPos, amount: Number(withdrawalAmount), reason: withdrawalReason }) })
+      if (res.ok) { toast.success("Retrait enregistre"); setShowWithdrawal(false); setWithdrawalAmount(""); setWithdrawalReason("") }
+      else { const d = await res.json(); toast.error(d.error || "Erreur") }
+    } finally {
+      setIsWithdrawing(false)
+    }
   }
 
   const activeOrder = activePayId ? payingOrders.get(activePayId) : null
@@ -153,10 +214,13 @@ export default function BillingPage() {
                         <p className="text-xs text-muted-foreground">{order.table_number ? `Table ${order.table_number}` : ""} {order.client_name || ""}</p>
                         {order.created_by_name && <p className="text-xs text-muted-foreground">Serveur(se): {order.created_by_name}</p>}
                       </div>
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2">
                         <span className="text-lg font-bold text-primary">{Number(order.total).toLocaleString()} CDF</span>
                         <Button size="sm" onClick={() => startPaying(order)} disabled={payingOrders.has(order.id)} className="bg-primary text-primary-foreground">
                           <CreditCard className="mr-1 h-4 w-4" /> Payer
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={() => openCreditDialog(order.id)} className="border-border text-foreground">
+                          <UserPlus className="mr-1 h-4 w-4" /> Credit
                         </Button>
                       </div>
                     </div>
@@ -195,7 +259,9 @@ export default function BillingPage() {
                   {(paymentMethod === "cash" || paymentMethod === "mixed") && <div className="flex flex-col gap-2"><Label className="text-card-foreground">Especes</Label><Input type="number" value={amountCash} onChange={(e) => setAmountCash(e.target.value)} className="border-border bg-secondary text-foreground" /></div>}
                   {(paymentMethod === "mobile_money" || paymentMethod === "mixed") && <div className="flex flex-col gap-2"><Label className="text-card-foreground">Mobile Money</Label><Input type="number" value={amountMobile} onChange={(e) => setAmountMobile(e.target.value)} className="border-border bg-secondary text-foreground" /></div>}
                   {(paymentMethod === "card" || paymentMethod === "mixed") && <div className="flex flex-col gap-2"><Label className="text-card-foreground">Carte</Label><Input type="number" value={amountCard} onChange={(e) => setAmountCard(e.target.value)} className="border-border bg-secondary text-foreground" /></div>}
-                  <Button onClick={handlePay} className="bg-primary text-primary-foreground">Confirmer + Imprimer ticket</Button>
+                  <Button onClick={handlePay} disabled={isPaying} className="bg-primary text-primary-foreground">
+                    {isPaying ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Traitement...</> : "Confirmer + Imprimer ticket"}
+                  </Button>
                 </CardContent>
               </Card>
             )}
@@ -241,7 +307,48 @@ export default function BillingPage() {
           <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-2"><Label className="text-card-foreground">Montant (CDF)</Label><Input type="number" value={withdrawalAmount} onChange={(e) => setWithdrawalAmount(e.target.value)} className="border-border bg-secondary text-foreground" /></div>
             <div className="flex flex-col gap-2"><Label className="text-card-foreground">Motif</Label><Textarea value={withdrawalReason} onChange={(e) => setWithdrawalReason(e.target.value)} placeholder="Ex: Achat ingredients..." className="border-border bg-secondary text-foreground" /></div>
-            <Button onClick={handleWithdrawal} className="bg-primary text-primary-foreground">Confirmer le retrait</Button>
+            <Button onClick={handleWithdrawal} disabled={isWithdrawing} className="bg-primary text-primary-foreground">
+              {isWithdrawing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Traitement...</> : "Confirmer le retrait"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Credit Sale Dialog */}
+      <Dialog open={showCreditDialog} onOpenChange={setShowCreditDialog}>
+        <DialogContent className="border-border bg-card text-card-foreground">
+          <DialogHeader><DialogTitle className="text-card-foreground">Vente a credit</DialogTitle></DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-2">
+              <Label className="text-card-foreground">Nom du client *</Label>
+              <Input 
+                value={creditClientName} 
+                onChange={(e) => setCreditClientName(e.target.value)} 
+                placeholder="Nom complet du client"
+                className="border-border bg-secondary text-foreground" 
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label className="text-card-foreground">Telephone</Label>
+              <Input 
+                value={creditClientPhone} 
+                onChange={(e) => setCreditClientPhone(e.target.value)} 
+                placeholder="Numero de telephone"
+                className="border-border bg-secondary text-foreground" 
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label className="text-card-foreground">Notes</Label>
+              <Textarea 
+                value={creditNotes} 
+                onChange={(e) => setCreditNotes(e.target.value)} 
+                placeholder="Notes sur le credit..."
+                className="border-border bg-secondary text-foreground" 
+              />
+            </div>
+            <Button onClick={handleCreateCredit} disabled={isCreatingCredit || !creditClientName} className="bg-primary text-primary-foreground">
+              {isCreatingCredit ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creation...</> : "Creer le credit"}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

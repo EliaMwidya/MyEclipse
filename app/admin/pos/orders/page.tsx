@@ -11,7 +11,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
-import { Plus, Minus, CreditCard, Edit2, Check, Lock, X, Clock, ChefHat, CheckCircle2, UtensilsCrossed, Ban, Printer } from "lucide-react"
+import { Textarea } from "@/components/ui/textarea"
+import { Plus, Minus, CreditCard, Edit2, Check, Lock, X, Clock, ChefHat, CheckCircle2, UtensilsCrossed, Ban, Printer, Loader2 } from "lucide-react"
 import { generateThermalReceipt, openPrintWindow } from "@/lib/pdf-generator"
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
@@ -31,7 +32,7 @@ const statusTabLabels: Record<string, string> = {
 }
 
 interface CartItem { menuItemId: string; itemName: string; unitPrice: number; quantity: number; optionsTotal: number }
-interface OrderType { id: string; order_number: string; status: string; total: number; table_number: string; order_type: string; client_name: string; created_at: string; items: { id: string; menu_item_id: string; item_name: string; quantity: number; unit_price: number; total: number; options_total: number }[] }
+interface OrderType { id: string; order_number: string; status: string; total: number; subtotal: number; discount: number; table_number: string; order_type: string; client_name: string; created_at: string; items: { id: string; menu_item_id: string; item_name: string; quantity: number; unit_price: number; total: number; options_total: number }[] }
 
 export default function OrdersPage() {
   const { data: locations } = useSWR("/api/pos-locations", fetcher)
@@ -49,6 +50,7 @@ export default function OrdersPage() {
   const [orderType, setOrderType] = useState("dine_in")
   const [clientName, setClientName] = useState("")
   const [notes, setNotes] = useState("")
+  const [discount, setDiscount] = useState("")
 
   // Selected order for detail view
   const [selectedOrder, setSelectedOrder] = useState<OrderType | null>(null)
@@ -64,6 +66,11 @@ export default function OrdersPage() {
   const [amountMobile, setAmountMobile] = useState("")
   const [amountCard, setAmountCard] = useState("")
   const [selectedWaiter, setSelectedWaiter] = useState("")
+
+  // Cancel order modal
+  const [cancellingOrder, setCancellingOrder] = useState<{ id: string; order_number: string } | null>(null)
+  const [cancelReason, setCancelReason] = useState("")
+  const [isCancelling, setIsCancelling] = useState(false)
 
   const company = {
     name: settings?.restaurant_name || "Eclipse Lunc Bar",
@@ -94,18 +101,20 @@ export default function OrdersPage() {
     setCart((prev) => prev.map((c) => c.menuItemId === menuItemId ? { ...c, quantity: Math.max(0, c.quantity + delta) } : c).filter((c) => c.quantity > 0))
   }
 
-  const cartTotal = cart.reduce((sum, c) => sum + c.quantity * c.unitPrice, 0)
+  const cartSubtotal = cart.reduce((sum, c) => sum + c.quantity * c.unitPrice, 0)
+  const cartDiscount = Number(discount) || 0
+  const cartTotal = Math.max(0, cartSubtotal - cartDiscount)
 
   async function handleCreateOrder(e: React.FormEvent) {
     e.preventDefault()
     if (cart.length === 0) { toast.error("Panier vide"); return }
     const res = await fetch("/api/pos/orders", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pointOfSaleId: selectedPos, tableId: tableId || null, orderType, items: cart, notes, clientName }),
+      body: JSON.stringify({ pointOfSaleId: selectedPos, tableId: tableId || null, orderType, items: cart, notes, clientName, discount: cartDiscount }),
     })
     if (res.ok) {
       toast.success("Commande creee")
-      mutate(); setOpen(false); setCart([]); setTableId(""); setNotes(""); setClientName("")
+      mutate(); setOpen(false); setCart([]); setTableId(""); setNotes(""); setClientName(""); setDiscount("")
     } else { const d = await res.json(); toast.error(d.error || "Erreur") }
   }
 
@@ -219,6 +228,34 @@ export default function OrdersPage() {
     updateOrderStatus(orderId, "closed")
   }
 
+  // Cancel order with reason
+  async function handleCancelOrder() {
+    if (!cancellingOrder || !cancelReason.trim()) {
+      toast.error("Veuillez fournir un motif d'annulation")
+      return
+    }
+    setIsCancelling(true)
+    try {
+      const res = await fetch(`/api/pos/orders/${cancellingOrder.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "cancelled", cancelReason }),
+      })
+      if (res.ok) {
+        toast.success("Commande annulee")
+        mutate()
+        setCancellingOrder(null)
+        setSelectedOrder(null)
+        setCancelReason("")
+      } else {
+        const d = await res.json()
+        toast.error(d.error || "Erreur")
+      }
+    } finally {
+      setIsCancelling(false)
+    }
+  }
+
   // Get next status action
   function getNextStatusAction(status: string): { label: string; nextStatus: string; color: string } | null {
     switch (status) {
@@ -311,14 +348,19 @@ export default function OrdersPage() {
                             </div>
                           </div>
                         ))}
-                        <div className="mt-3 border-t border-border pt-3 text-right text-xl font-bold text-primary">
-                          Total: {cartTotal.toLocaleString()} CDF
+                        <div className="mt-3 border-t border-border pt-3 text-right">
+                          <div className="text-sm text-muted-foreground">Sous-total: {cartSubtotal.toLocaleString()} CDF</div>
+                          {cartDiscount > 0 && <div className="text-sm text-green-500">Rabais: -{cartDiscount.toLocaleString()} CDF</div>}
+                          <div className="text-xl font-bold text-primary">Total: {cartTotal.toLocaleString()} CDF</div>
                         </div>
                       </CardContent>
                     </Card>
                   )}
 
-                  <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes..." className="h-12 border-border bg-secondary text-foreground" />
+                  <div className="grid grid-cols-2 gap-3">
+                    <Input value={discount} onChange={(e) => setDiscount(e.target.value)} type="number" placeholder="Rabais (CDF)" className="h-12 border-border bg-secondary text-foreground" />
+                    <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes..." className="h-12 border-border bg-secondary text-foreground" />
+                  </div>
                   <Button type="submit" size="lg" className="h-14 bg-primary text-lg text-primary-foreground" disabled={cart.length === 0}>
                     Creer la commande
                   </Button>
@@ -534,7 +576,7 @@ export default function OrdersPage() {
                       size="lg"
                       variant="ghost"
                       className="h-12 w-full text-destructive hover:bg-destructive/10"
-                      onClick={() => updateOrderStatus(selectedOrder.id, "cancelled")}
+                      onClick={() => { setCancellingOrder({ id: selectedOrder.id, order_number: selectedOrder.order_number }); setCancelReason("") }}
                     >
                       <X className="mr-2 h-5 w-5" /> Annuler
                     </Button>
@@ -660,6 +702,37 @@ export default function OrdersPage() {
               <Button variant="outline" onClick={() => setPayingOrder(null)} className="h-14 flex-1 border-border text-foreground">Annuler</Button>
               <Button onClick={handlePayment} className="h-14 flex-1 bg-primary text-lg text-primary-foreground">
                 <Printer className="mr-2 h-5 w-5" /> Payer + Imprimer
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Cancel Order Modal */}
+      <Dialog open={!!cancellingOrder} onOpenChange={(open) => { if (!open) { setCancellingOrder(null); setCancelReason("") } }}>
+        <DialogContent className="border-border bg-card text-card-foreground">
+          <DialogHeader>
+            <DialogTitle className="text-xl text-card-foreground">Annuler la commande - {cancellingOrder?.order_number}</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="rounded-lg bg-destructive/10 p-4">
+              <p className="text-sm text-destructive">Attention: Cette action est irreversible. La commande sera marquee comme annulee.</p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label className="text-card-foreground">Motif d&apos;annulation *</Label>
+              <Textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Expliquez pourquoi cette commande est annulee..."
+                className="min-h-[100px] border-border bg-secondary text-foreground"
+              />
+            </div>
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={() => { setCancellingOrder(null); setCancelReason("") }} className="h-12 flex-1 border-border text-foreground">
+                Retour
+              </Button>
+              <Button onClick={handleCancelOrder} disabled={isCancelling || !cancelReason.trim()} className="h-12 flex-1 bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                {isCancelling ? <><Loader2 className="mr-2 h-5 w-5 animate-spin" /> Annulation...</> : <><X className="mr-2 h-5 w-5" /> Confirmer l&apos;annulation</>}
               </Button>
             </div>
           </div>

@@ -34,7 +34,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const session = await getSession()
-    const { pointOfSaleId, tableId, orderType, items, notes, clientName } = await request.json()
+    const { pointOfSaleId, tableId, orderType, items, notes, clientName, discount } = await request.json()
     if (!pointOfSaleId || !items || items.length === 0) {
       return NextResponse.json({ error: "Commande vide" }, { status: 400 })
     }
@@ -50,14 +50,18 @@ export async function POST(request: Request) {
     // Get tax rate
     const settings = await query("SELECT value FROM settings WHERE key = 'tva_rate'")
     const taxRate = settings[0] ? Number(settings[0].value) / 100 : 0.18
-    const taxAmount = Math.round(subtotal * taxRate)
-    const total = subtotal + taxAmount
+    
+    // Apply discount before tax
+    const discountAmount = Number(discount) || 0
+    const subtotalAfterDiscount = Math.max(0, subtotal - discountAmount)
+    const taxAmount = Math.round(subtotalAfterDiscount * taxRate)
+    const total = subtotalAfterDiscount + taxAmount
 
     // Create order
     const orderResult = await query(
-      `INSERT INTO orders (order_number, point_of_sale_id, table_id, order_type, subtotal, tax_amount, total, notes, client_name, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
-      [orderNumber, pointOfSaleId, tableId || null, orderType || "dine_in", subtotal, taxAmount, total, notes || "", clientName || "", session?.id || null]
+      `INSERT INTO orders (order_number, point_of_sale_id, table_id, order_type, subtotal, tax_amount, total, notes, client_name, created_by, discount)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [orderNumber, pointOfSaleId, tableId || null, orderType || "dine_in", subtotal, taxAmount, total, notes || "", clientName || "", session?.id || null, discountAmount]
     )
     const order = orderResult[0]
 

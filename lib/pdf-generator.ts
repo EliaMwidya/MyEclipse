@@ -231,6 +231,127 @@ export function generateWithdrawalPDF(data: {
 }
 
 // ============================================
+// A4 PDF - Cash Session Closing Report
+// ============================================
+export function generateCashClosingPDF(data: {
+  sessionId: string;
+  date: string;
+  posName: string;
+  openedBy: string;
+  closedBy: string;
+  openedAt: string;
+  closedAt: string;
+  openingAmount: number;
+  totalSales: number;
+  totalCash: number;
+  totalMobile: number;
+  totalCard: number;
+  totalWithdrawals: number;
+  closingAmount: number;
+  expectedAmount: number;
+  difference: number;
+  exchangeRate?: number;
+  company: CompanyInfo;
+}): string {
+  const usdTotal = data.exchangeRate ? Math.round(data.totalSales / data.exchangeRate * 100) / 100 : null;
+  const usdClosing = data.exchangeRate ? Math.round(data.closingAmount / data.exchangeRate * 100) / 100 : null;
+  
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>BON DE CLOTURE - ${data.date}</title>
+<style>
+  @page { margin: 15mm; size: A4; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Helvetica Neue', Arial, sans-serif; font-size: 12px; color: #222; background: #fff; padding: 15mm; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 10px; border-bottom: 3px solid #d4920a; }
+  .company-name { font-size: 20px; font-weight: 700; color: #1a1a2e; }
+  .company-sub { font-size: 10px; color: #666; margin-top: 3px; }
+  .doc-title { font-size: 16px; font-weight: 700; color: #d4920a; text-align: right; }
+  .doc-ref { font-size: 11px; color: #666; text-align: right; margin-top: 3px; }
+  .section { margin: 15px 0; padding: 12px; background: #f8f8f8; border-radius: 6px; border-left: 3px solid #d4920a; }
+  .section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 1px; color: #999; margin-bottom: 8px; }
+  .row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dotted #ddd; }
+  .row:last-child { border-bottom: none; }
+  .row-label { color: #666; }
+  .row-value { font-weight: 500; color: #222; }
+  .total-box { margin: 15px 0; padding: 12px 16px; background: #1a1a2e; color: #fff; border-radius: 6px; }
+  .total-row { display: flex; justify-content: space-between; padding: 3px 0; }
+  .total-label { font-size: 12px; }
+  .total-value { font-size: 14px; font-weight: 600; }
+  .grand-total { font-size: 18px; font-weight: 700; color: #d4920a; }
+  .difference { padding: 10px; border-radius: 6px; text-align: center; margin: 10px 0; }
+  .difference.positive { background: #d4edda; color: #155724; }
+  .difference.negative { background: #f8d7da; color: #721c24; }
+  .difference.zero { background: #e2e3e5; color: #383d41; }
+  .signatures { display: flex; justify-content: space-between; margin-top: 40px; }
+  .sig-box { text-align: center; width: 180px; }
+  .sig-line { border-top: 1px solid #ccc; padding-top: 6px; font-size: 10px; color: #666; }
+  .footer { margin-top: 30px; text-align: center; font-size: 9px; color: #999; border-top: 1px solid #eee; padding-top: 10px; }
+  .usd-note { font-size: 10px; color: #666; font-style: italic; }
+  @media print { .no-print { display: none; } body { padding: 0; } }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="company-name">${data.company.name}</div>
+      <div class="company-sub">${data.company.address || ""}</div>
+      <div class="company-sub">${data.company.phone ? "Tel: " + data.company.phone : ""}</div>
+    </div>
+    <div>
+      <div class="doc-title">BON DE CLOTURE DE CAISSE</div>
+      <div class="doc-ref">${data.posName}</div>
+      <div class="doc-ref">${data.date}</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Informations de la session</div>
+    <div class="row"><span class="row-label">Point de vente</span><span class="row-value">${data.posName}</span></div>
+    <div class="row"><span class="row-label">Ouverture</span><span class="row-value">${data.openedAt} par ${data.openedBy}</span></div>
+    <div class="row"><span class="row-label">Fermeture</span><span class="row-value">${data.closedAt} par ${data.closedBy}</span></div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Detail des encaissements</div>
+    <div class="row"><span class="row-label">Fond de caisse (ouverture)</span><span class="row-value">${data.openingAmount.toLocaleString("fr-FR")} ${data.company.currency}</span></div>
+    <div class="row"><span class="row-label">Ventes en especes</span><span class="row-value">${data.totalCash.toLocaleString("fr-FR")} ${data.company.currency}</span></div>
+    <div class="row"><span class="row-label">Ventes Mobile Money</span><span class="row-value">${data.totalMobile.toLocaleString("fr-FR")} ${data.company.currency}</span></div>
+    <div class="row"><span class="row-label">Ventes par Carte</span><span class="row-value">${data.totalCard.toLocaleString("fr-FR")} ${data.company.currency}</span></div>
+    <div class="row"><span class="row-label">Retraits de caisse</span><span class="row-value">-${data.totalWithdrawals.toLocaleString("fr-FR")} ${data.company.currency}</span></div>
+  </div>
+
+  <div class="total-box">
+    <div class="total-row"><span class="total-label">Total des ventes</span><span class="total-value">${data.totalSales.toLocaleString("fr-FR")} ${data.company.currency}</span></div>
+    ${usdTotal ? `<div class="total-row usd-note"><span>Equivalent USD (taux: ${data.exchangeRate?.toLocaleString("fr-FR")})</span><span>${usdTotal.toLocaleString("fr-FR")} USD</span></div>` : ''}
+    <div class="total-row"><span class="total-label">Montant attendu en caisse</span><span class="total-value">${data.expectedAmount.toLocaleString("fr-FR")} ${data.company.currency}</span></div>
+    <div class="total-row"><span class="total-label">Montant compte (cloture)</span><span class="total-value grand-total">${data.closingAmount.toLocaleString("fr-FR")} ${data.company.currency}</span></div>
+    ${usdClosing ? `<div class="total-row usd-note"><span>Equivalent USD</span><span>${usdClosing.toLocaleString("fr-FR")} USD</span></div>` : ''}
+  </div>
+
+  <div class="difference ${data.difference > 0 ? 'positive' : data.difference < 0 ? 'negative' : 'zero'}">
+    <strong>Ecart: ${data.difference > 0 ? '+' : ''}${data.difference.toLocaleString("fr-FR")} ${data.company.currency}</strong>
+    ${data.difference === 0 ? ' (Caisse equilibree)' : data.difference > 0 ? ' (Excedent)' : ' (Manquant)'}
+  </div>
+
+  <div class="signatures">
+    <div class="sig-box"><div class="sig-line">Caissier(e)</div></div>
+    <div class="sig-box"><div class="sig-line">Superviseur</div></div>
+    <div class="sig-box"><div class="sig-line">Directeur</div></div>
+  </div>
+
+  <div class="footer">${data.company.name} - Bon de cloture genere le ${data.date}</div>
+
+  <div class="no-print" style="text-align:center;margin-top:20px">
+    <button onclick="window.print()" style="padding:10px 30px;font-size:14px;cursor:pointer;background:#d4920a;color:#000;border:none;border-radius:6px;font-weight:600;">Imprimer / Telecharger PDF</button>
+  </div>
+</body>
+</html>`;
+}
+
+// ============================================
 // Generic A4 Document
 // ============================================
 function generateA4Document(data: {

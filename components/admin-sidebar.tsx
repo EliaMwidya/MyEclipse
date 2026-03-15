@@ -23,6 +23,7 @@ import {
   Bell,
   Layers,
   BookOpen,
+  CreditCard,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -52,6 +53,7 @@ const navGroups = [
       { href: "/admin/pos/orders", label: "Commandes", icon: ShoppingCart },
       { href: "/admin/pos/tables", label: "Tables", icon: Store },
       { href: "/admin/pos/billing", label: "Facturation", icon: Receipt },
+      { href: "/admin/pos/credits", label: "Credits", icon: CreditCard },
       { href: "/admin/pos/cash", label: "Caisse", icon: DollarSign },
       { href: "/admin/pos/stock", label: "Stock POS", icon: Package },
     ],

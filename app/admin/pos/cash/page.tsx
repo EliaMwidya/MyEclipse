@@ -10,36 +10,123 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
 import { toast } from "sonner"
-import { DollarSign, Lock, Unlock } from "lucide-react"
+import { DollarSign, Lock, Unlock, Printer, Loader2 } from "lucide-react"
+import { generateCashClosingPDF, openPrintWindow } from "@/lib/pdf-generator"
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
 export default function CashPage() {
   const { data: locations } = useSWR("/api/pos-locations", fetcher)
+  const { data: settings } = useSWR("/api/settings", fetcher)
   const [selectedPos, setSelectedPos] = useState("")
   const { data: sessions, mutate } = useSWR(selectedPos ? `/api/pos/cash?posId=${selectedPos}` : null, fetcher)
   const [openAmount, setOpenAmount] = useState("")
   const [closeAmount, setCloseAmount] = useState("")
   const [closingSession, setClosingSession] = useState<string | null>(null)
+  const [isOpening, setIsOpening] = useState(false)
+  const [isClosing, setIsClosing] = useState(false)
+
+  const company = {
+    name: settings?.restaurant_name || "Eclipse Lunc Bar",
+    address: settings?.restaurant_address || "",
+    phone: settings?.restaurant_phone || "",
+    currency: settings?.currency || "CDF",
+    tvaRate: settings?.tva_rate || "18",
+  }
+
+  const exchangeRate = Number(settings?.exchange_rate_usd_cdf) || 2800
 
   const openSession = (sessions || []).find((s: { status: string }) => s.status === "open")
 
   async function handleOpen() {
-    const res = await fetch("/api/pos/cash", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pointOfSaleId: selectedPos, action: "open", openingAmount: Number(openAmount) || 0 }),
-    })
-    if (res.ok) { toast.success("Caisse ouverte"); mutate(); setOpenAmount("") }
-    else { const d = await res.json(); toast.error(d.error || "Erreur") }
+    setIsOpening(true)
+    try {
+      const res = await fetch("/api/pos/cash", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pointOfSaleId: selectedPos, action: "open", openingAmount: Number(openAmount) || 0 }),
+      })
+      if (res.ok) { toast.success("Caisse ouverte"); mutate(); setOpenAmount("") }
+      else { const d = await res.json(); toast.error(d.error || "Erreur") }
+    } finally {
+      setIsOpening(false)
+    }
   }
 
   async function handleClose() {
     if (!closingSession) return
-    const res = await fetch("/api/pos/cash", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "close", sessionId: closingSession, closingAmount: Number(closeAmount) || 0 }),
+    setIsClosing(true)
+    try {
+      const res = await fetch("/api/pos/cash", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "close", sessionId: closingSession, closingAmount: Number(closeAmount) || 0 }),
+      })
+      if (res.ok) {
+        toast.success("Caisse fermee")
+        // Generate and print closing report
+        const session = openSession
+        if (session) {
+          const posName = (locations || []).find((l: { id: string }) => l.id === selectedPos)?.name || "POS"
+          const expectedAmount = Number(session.opening_amount) + Number(session.total_cash) - Number(session.total_withdrawals || 0)
+          const closingAmt = Number(closeAmount) || 0
+          const html = generateCashClosingPDF({
+            sessionId: session.id,
+            date: new Date().toLocaleString("fr-FR"),
+            posName,
+            openedBy: session.opened_by_name || "-",
+            closedBy: "Caissier",
+            openedAt: new Date(session.opened_at).toLocaleString("fr-FR"),
+            closedAt: new Date().toLocaleString("fr-FR"),
+            openingAmount: Number(session.opening_amount),
+            totalSales: Number(session.total_sales),
+            totalCash: Number(session.total_cash),
+            totalMobile: Number(session.total_mobile),
+            totalCard: Number(session.total_card),
+            totalWithdrawals: Number(session.total_withdrawals || 0),
+            closingAmount: closingAmt,
+            expectedAmount,
+            difference: closingAmt - expectedAmount,
+            exchangeRate,
+            company,
+          })
+          openPrintWindow(html)
+        }
+        mutate()
+        setClosingSession(null)
+        setCloseAmount("")
+      } else {
+        const d = await res.json()
+        toast.error(d.error || "Erreur")
+      }
+    } finally {
+      setIsClosing(false)
+    }
+  }
+
+  function printClosingReport(session: { id: string; opened_at: string; closed_at: string; opening_amount: number; total_sales: number; total_cash: number; total_mobile: number; total_card: number; total_withdrawals: number; closing_amount: number; opened_by_name: string; closed_by_name: string }) {
+    const posName = (locations || []).find((l: { id: string }) => l.id === selectedPos)?.name || "POS"
+    const expectedAmount = Number(session.opening_amount) + Number(session.total_cash) - Number(session.total_withdrawals || 0)
+    const closingAmt = Number(session.closing_amount) || 0
+    const html = generateCashClosingPDF({
+      sessionId: session.id,
+      date: new Date(session.closed_at).toLocaleString("fr-FR"),
+      posName,
+      openedBy: session.opened_by_name || "-",
+      closedBy: session.closed_by_name || "-",
+      openedAt: new Date(session.opened_at).toLocaleString("fr-FR"),
+      closedAt: new Date(session.closed_at).toLocaleString("fr-FR"),
+      openingAmount: Number(session.opening_amount),
+      totalSales: Number(session.total_sales),
+      totalCash: Number(session.total_cash),
+      totalMobile: Number(session.total_mobile),
+      totalCard: Number(session.total_card),
+      totalWithdrawals: Number(session.total_withdrawals || 0),
+      closingAmount: closingAmt,
+      expectedAmount,
+      difference: closingAmt - expectedAmount,
+      exchangeRate,
+      company,
     })
-    if (res.ok) { toast.success("Caisse fermee"); mutate(); setClosingSession(null); setCloseAmount("") }
+    openPrintWindow(html)
   }
 
   return (

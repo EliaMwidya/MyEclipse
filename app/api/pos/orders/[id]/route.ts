@@ -31,19 +31,27 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
   try {
     const { id } = await params
     const body = await request.json()
-    const { status, items } = body
+    const { status, items, discount, cancelReason } = body
 
     // Handle status update
     if (status !== undefined) {
-      // Check if trying to close without payment
-      if (status === "closed") {
-        const payments = await query("SELECT id FROM payments WHERE order_id = $1", [id])
-        if (payments.length === 0) {
-          return NextResponse.json({ error: "Impossible de cloturer: le paiement n'a pas encore ete effectue" }, { status: 400 })
+      // If cancelling, require a reason
+      if (status === "cancelled") {
+        if (!cancelReason || cancelReason.trim() === "") {
+          return NextResponse.json({ error: "Motif d'annulation requis" }, { status: 400 })
         }
-      }
+        await query("UPDATE orders SET status = $1, cancel_reason = $2, updated_at = NOW() WHERE id = $3", [status, cancelReason, id])
+      } else {
+        // Check if trying to close without payment
+        if (status === "closed") {
+          const payments = await query("SELECT id FROM payments WHERE order_id = $1", [id])
+          if (payments.length === 0) {
+            return NextResponse.json({ error: "Impossible de cloturer: le paiement n'a pas encore ete effectue" }, { status: 400 })
+          }
+        }
 
-      await query("UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2", [status, id])
+        await query("UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2", [status, id])
+      }
 
       // If delivered, cancelled, or closed, free the table
       if (status === "delivered" || status === "cancelled" || status === "closed") {
@@ -87,12 +95,17 @@ export async function PUT(request: Request, { params }: { params: Promise<{ id: 
       // Recalculate order totals
       const settings = await query("SELECT value FROM settings WHERE key = 'tva_rate'")
       const taxRate = settings[0] ? Number(settings[0].value) / 100 : 0.18
-      const taxAmount = Math.round(subtotal * taxRate)
-      const total = subtotal + taxAmount
+      
+      // Get current discount or use new one
+      const currentOrder = await query("SELECT discount FROM orders WHERE id = $1", [id])
+      const discountAmount = discount !== undefined ? Number(discount) : (Number(currentOrder[0]?.discount) || 0)
+      const subtotalAfterDiscount = Math.max(0, subtotal - discountAmount)
+      const taxAmount = Math.round(subtotalAfterDiscount * taxRate)
+      const total = subtotalAfterDiscount + taxAmount
 
       await query(
-        "UPDATE orders SET subtotal = $1, tax_amount = $2, total = $3, updated_at = NOW() WHERE id = $4",
-        [subtotal, taxAmount, total, id]
+        "UPDATE orders SET subtotal = $1, tax_amount = $2, total = $3, discount = $4, updated_at = NOW() WHERE id = $5",
+        [subtotal, taxAmount, total, discountAmount, id]
       )
     }
 
